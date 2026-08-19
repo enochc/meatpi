@@ -1,0 +1,29 @@
+[package]
+name = "meatpi-core"
+description = "Transport, ELM327 session handling and OBD-II/HKMC decoding for the WiCAN Pro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# BLE pulls in an async runtime, so it stays optional — the TCP path and all
+# decoding remain dependency-light.
+ble = ["dep:btleplug", "dep:tokio", "dep:futures", "dep:uuid"]
+
+[dependencies]
+log = "0.4"
+btleplug = { version = "0.12", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"], optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1.24.1", optional = true }
+
+[[example]]
+name = "ble_scan"
+required-features = ["ble"]
+
+[[example]]
+name = "ble_probe"
+required-features = ["ble"]
+
+[dev-dependencies]

@@ -1,0 +1,21 @@
+export global Theme {
+    out property <color> bg: #0b0f14;
+    out property <color> surface: #151b23;
+    out property <color> surface-alt: #1d242e;
+    out property <color> border: #253040;
+    out property <color> text: #e6edf3;
+    out property <color> muted: #8b98a5;
+
+    out property <color> accent: #3fb950;
+    out property <color> info: #58a6ff;
+    out property <color> warn: #d29922;
+    out property <color> danger: #f85149;
+
+    out property <length> radius: 14px;
+    out property <length> gap: 12px;
+
+    // Green while there is plenty left, amber under 40 %, red under 15 %.
+    public pure function soc-color(soc: float) -> color {
+        return soc < 15 ? root.danger : soc < 40 ? root.warn : root.accent;
+    }
+}

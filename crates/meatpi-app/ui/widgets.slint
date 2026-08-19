@@ -1,0 +1,150 @@
+import { Theme } from "theme.slint";
+
+/// A single read-out. `value` arrives pre-formatted from Rust so that an
+/// unavailable PID can render as an em dash rather than a misleading 0.
+export component StatTile inherits Rectangle {
+    in property <string> label;
+    in property <string> value: "—";
+    in property <string> unit;
+    in property <color> accent: Theme.text;
+
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    min-height: 78px;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 4px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: 12px;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+
+            Text {
+                text: root.value;
+                color: root.accent;
+                font-size: 23px;
+                font-weight: 700;
+            }
+
+            VerticalLayout {
+                alignment: end;
+                padding-bottom: 4px;
+                Text {
+                    text: root.unit;
+                    color: Theme.muted;
+                    font-size: 11px;
+                }
+            }
+        }
+    }
+}
+
+/// State-of-charge ring, drawn as a dotted arc so it stays crisp at any size
+/// without needing a vector renderer.
+export component SocGauge inherits Rectangle {
+    in property <float> soc: 0;
+    in property <bool> known: false;
+    in property <string> soc-text: "—";
+    in property <string> caption;
+
+    property <length> side: Math.min(root.width, root.height);
+    property <color> lit: Theme.soc-color(root.soc);
+
+    Rectangle {
+        width: root.side;
+        height: root.side;
+        // Children of a plain Rectangle sit at (0,0), so centre the square
+        // ourselves — otherwise the ring hugs the top-left of a wide card.
+        x: (root.width - root.side) / 2;
+        y: (root.height - root.side) / 2;
+
+        // 44 dots sweeping 270°, starting at the lower-left.
+        for i in 44: Rectangle {
+            property <float> frac: i / 43.0;
+            property <angle> a: (135 + 270 * self.frac) * 1deg;
+            property <bool> on: root.known && (self.frac * 100) <= root.soc;
+
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            x: parent.width / 2 + (parent.width / 2 - 10px) * Math.cos(self.a) - self.width / 2;
+            y: parent.height / 2 + (parent.height / 2 - 10px) * Math.sin(self.a) - self.height / 2;
+            background: self.on ? root.lit : Theme.surface-alt;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.soc-text;
+                color: root.known ? root.lit : Theme.muted;
+                font-size: 52px;
+                font-weight: 800;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "state of charge";
+                color: Theme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: root.caption;
+                color: Theme.muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+/// Connection indicator: a coloured dot plus a short message.
+export component StatusPill inherits Rectangle {
+    in property <color> tint;
+    in property <string> text;
+
+    background: Theme.surface-alt;
+    border-radius: 999px;
+    border-width: 1px;
+    border-color: Theme.border;
+    horizontal-stretch: 0;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 9px;
+                height: 9px;
+                border-radius: 5px;
+                background: root.tint;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+}
