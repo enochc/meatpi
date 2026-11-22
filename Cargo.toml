@@ -17,3 +17,11 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# The browser build (see crates/meatpi-app/src/web.rs). Release-sized, but
+# without full LTO so it builds in minutes rather than tens of minutes.
+[profile.web]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+opt-level = "s"

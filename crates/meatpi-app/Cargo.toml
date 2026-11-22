@@ -15,15 +15,40 @@ name = "meatpi-app"
 path = "src/main.rs"
 
 [dependencies]
-meatpi-core.workspace = true
+meatpi-core = { workspace = true, features = ["remote-parse"] }
 log = "0.4"
 slint = "1.17.1"
+
+# Native builds read MeatHandler with a blocking HTTP client on the worker
+# thread. The web build cannot (no threads, no sockets), see src/web.rs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+meatpi-core = { workspace = true, features = ["remote"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Response"] }
+console_error_panic_hook = "0.1"
+console_log = "1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "1.17.1", features = ["backend-android-activity-06"] }
 android_logger = "0.15"
+# Android Keystore access for the saved login (src/secrets/android.rs).
+jni = "0.21"
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# OS secret stores for the saved login (src/secrets.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
+# Pure-Rust D-Bus, so no libdbus is needed to build.
+keyring = { version = "3", features = ["async-secret-service", "async-io", "crypto-rust"] }
+
+[target.'cfg(not(any(target_os = "android", target_arch = "wasm32")))'.dependencies]
 env_logger = "0.11"
 
 [build-dependencies]

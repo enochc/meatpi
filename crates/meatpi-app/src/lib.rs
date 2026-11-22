@@ -1,14 +1,28 @@
+#[cfg(not(target_arch = "wasm32"))]
+mod secrets;
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(not(target_arch = "wasm32"))]
 mod worker;
 
-use meatpi_core::{Sample, KIA_EV6};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use meatpi_core::Sample;
+#[cfg(not(target_arch = "wasm32"))]
+use meatpi_core::KIA_EV6;
+use slint::SharedString;
+#[cfg(not(target_arch = "wasm32"))]
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+#[cfg(not(target_arch = "wasm32"))]
 use std::rc::Rc;
-use worker::{Command, Event, Status, Worker};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use worker::{Command, Event, Source, Status, Worker};
 
 slint::include_modules!();
 
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_LOG_LINES: usize = 300;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.set_profile_name(KIA_EV6.name.into());
@@ -32,21 +46,43 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let worker = worker.clone();
         move || {
             let Some(ui) = ui.upgrade() else { return };
-            let port = ui.get_port().trim().parse::<u16>().unwrap_or({
-                ui.set_status("Port must be a number, using 35000".into());
-                meatpi_core::DEFAULT_PORT
-            });
-            worker.send(Command::Connect {
-                host: ui.get_host().trim().to_string(),
-                port,
-                simulate: ui.get_simulate(),
-            });
+            let source = if ui.get_simulate() {
+                Source::Simulator
+            } else if ui.get_remote() {
+                Source::MeatHandler {
+                    url: ui.get_remote_url().trim().to_string(),
+                    user: ui.get_remote_user().trim().to_string(),
+                    pass: ui.get_remote_pass().to_string(),
+                    remember: ui.get_remember(),
+                }
+            } else {
+                let port = ui.get_port().trim().parse::<u16>().unwrap_or({
+                    ui.set_status("Port must be a number, using 35000".into());
+                    meatpi_core::DEFAULT_PORT
+                });
+                Source::Dongle {
+                    host: ui.get_host().trim().to_string(),
+                    port,
+                }
+            };
+            worker.send(Command::Connect(source));
         }
     });
 
     ui.on_disconnect_requested({
         let worker = worker.clone();
         move || worker.send(Command::Disconnect)
+    });
+
+    ui.on_forget_requested({
+        let ui = ui.as_weak();
+        move || {
+            secrets::forget();
+            if let Some(ui) = ui.upgrade() {
+                ui.set_remote_pass("".into());
+                ui.set_has_saved_login(false);
+            }
+        }
     });
 
     ui.on_command_entered({
@@ -60,23 +96,49 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     // `MEATPI_SIM=1` boots straight into the simulator, which is how you work
-    // on the UI without the car. `MEATPI_HOST` overrides the address, and
-    // `MEATPI_CONNECT=1` connects on launch instead of waiting for a click.
+    // on the UI without the car. `MEATPI_HOST` overrides the dongle address
+    // and `MEATPI_DIRECT=1` starts in direct-dongle mode instead of
+    // MeatHandler. `MEATHANDLER_URL`, `MEATHANDLER_USER` and
+    // `MEATHANDLER_PASS` fill in the MeatHandler login. `MEATPI_CONNECT=1`
+    // connects on launch instead of waiting for a click.
     let enabled = |key: &str| std::env::var(key).is_ok_and(|v| v != "0");
+
+    // A login saved by an earlier run means we can connect straight away.
+    let saved = secrets::load();
+    if let Some(login) = &saved {
+        ui.set_remote_url(login.url.clone().into());
+        ui.set_remote_user(login.user.clone().into());
+        ui.set_remote_pass(login.pass.clone().into());
+        ui.set_has_saved_login(true);
+    }
 
     if let Ok(host) = std::env::var("MEATPI_HOST") {
         ui.set_host(host.into());
     }
+    if enabled("MEATPI_DIRECT") {
+        ui.set_remote(false);
+    }
+    if let Ok(url) = std::env::var("MEATHANDLER_URL") {
+        ui.set_remote_url(url.into());
+    }
+    if let Ok(user) = std::env::var("MEATHANDLER_USER") {
+        ui.set_remote_user(user.into());
+    }
+    if let Ok(pass) = std::env::var("MEATHANDLER_PASS") {
+        ui.set_remote_pass(pass.into());
+    }
     if enabled("MEATPI_SIM") {
         ui.set_simulate(true);
     }
-    if enabled("MEATPI_SIM") || enabled("MEATPI_CONNECT") {
+    let auto_connect = saved.is_some() && ui.get_remote();
+    if enabled("MEATPI_SIM") || enabled("MEATPI_CONNECT") || auto_connect {
         ui.invoke_connect_requested();
     }
 
     ui.run()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn handle_event(ui: &AppWindow, event: Event) {
     match event {
         Event::Status(status, message) => {
@@ -95,11 +157,14 @@ fn handle_event(ui: &AppWindow, event: Event) {
         Event::Sample(sample) => ui.set_data(to_telemetry(&sample)),
 
         Event::Log(line) => push_log(ui, line),
+
+        Event::LoginSaved(saved) => ui.set_has_saved_login(saved),
     }
 }
 
 /// The log model lives on the window itself, so nothing extra has to be shared
 /// between callbacks.
+#[cfg(not(target_arch = "wasm32"))]
 fn push_log(ui: &AppWindow, line: String) {
     let model = ui.get_log_lines();
     let Some(lines) = model.as_any().downcast_ref::<VecModel<SharedString>>() else {
@@ -109,6 +174,30 @@ fn push_log(ui: &AppWindow, line: String) {
         lines.remove(0);
     }
     lines.push(line.into());
+}
+
+/// "8s ago", "3m ago", ... for status lines.
+pub(crate) fn ago(d: Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..=59 => format!("{s}s ago"),
+        60..=3599 => format!("{}m ago", s / 60),
+        3600..=86_399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86_400),
+    }
+}
+
+/// The dongle posts every 10 s while the car is awake. Anything much older
+/// means it has gone to sleep.
+pub(crate) const FRESH_FOR: Duration = Duration::from_secs(90);
+
+/// Status line for a MeatHandler reading of the given age.
+pub(crate) fn remote_status(age: Option<Duration>) -> String {
+    match age {
+        None => "MeatHandler · no data from the car yet".into(),
+        Some(a) if a <= FRESH_FOR => format!("Live · {}", ago(a)),
+        Some(a) => format!("Car asleep · last update {}", ago(a)),
+    }
 }
 
 /// Format a value, or an em dash when the PID did not answer. Keeping this on
@@ -135,12 +224,28 @@ fn to_telemetry(s: &Sample) -> Telemetry {
 
     let unanswered = s.stale.len();
     let updated_text = if unanswered == 0 {
-        SharedString::from("all requests answered")
+        SharedString::from("all readings present")
     } else {
-        SharedString::from(format!("{unanswered} request(s) unanswered"))
+        SharedString::from(format!("{unanswered} reading(s) missing"))
+    };
+
+    let charging = s.is_charging();
+    let charge_text = SharedString::from(match (charging, s.is_plugged()) {
+        (Some(true), _) => "Charging",
+        (_, Some(true)) => "Plugged in, not charging",
+        (_, Some(false)) => "Not plugged in",
+        (Some(false), None) => "Not charging",
+        (None, None) => "—",
+    });
+    let charge_rate_text = match (charging, s.power_kw()) {
+        (Some(true), Some(kw)) => num(Some(-kw), 1),
+        _ => SharedString::from("—"),
     };
 
     Telemetry {
+        charge_text,
+        charge_rate_text,
+        charging: charging == Some(true),
         soc: s.soc().unwrap_or(0.0) as f32,
         soc_known: s.soc().is_some(),
         soc_text: num(s.soc(), 1),
@@ -164,6 +269,7 @@ fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default().with_max_level(log::LevelFilter::Debug),
     );
+    secrets::init(&app);
     slint::android::init(app).expect("failed to initialise the Android backend");
     if let Err(e) = run() {
         log::error!("app exited: {e}");

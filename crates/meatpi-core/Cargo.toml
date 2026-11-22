@@ -10,6 +10,12 @@ default = []
 # BLE pulls in an async runtime, so it stays optional — the TCP path and all
 # decoding remain dependency-light.
 ble = ["dep:btleplug", "dep:tokio", "dep:futures", "dep:uuid"]
+# Read the car through the MeatHandler server instead of the dongle. Blocking
+# HTTP, so it fits the app's worker thread without an async runtime.
+remote = ["remote-parse", "dep:ureq", "dep:base64"]
+# Just the `/api/latest` parser, with no HTTP client. The web (wasm) build
+# fetches through the browser and only needs this.
+remote-parse = ["dep:serde_json"]
 
 [dependencies]
 log = "0.4"
@@ -17,10 +23,17 @@ btleplug = { version = "0.12", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"], optional = true }
 futures = { version = "0.3", optional = true }
 uuid = { version = "1.24.1", optional = true }
+ureq = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
 
 [[example]]
 name = "ble_scan"
 required-features = ["ble"]
+
+[[example]]
+name = "remote_probe"
+required-features = ["remote"]
 
 [[example]]
 name = "ble_probe"

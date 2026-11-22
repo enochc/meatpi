@@ -1,0 +1,28 @@
+[package]
+name = "meathandler-server"
+version = "0.1.0"
+edition = "2021"
+description = "Receives periodic telemetry POSTs from a WiCAN Pro and serves it on the LAN"
+
+# Standalone: not part of the meatpi app workspace.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+base64 = "0.22"
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+tracing = "0.1"
+ureq = "2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+strip = true
+lto = "thin"

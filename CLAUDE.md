@@ -16,7 +16,13 @@ cargo run -p meatpi-core --example probe -- 10.43.1.39:35000
 cargo run -p meatpi-core --example probe -- --sim
 ```
 
-The dongle lives at `10.43.1.39:35000` (station mode on the home network).
+The dongle lives at `10.43.1.39` (station mode on the home network). It now
+runs in **AutoPID** protocol mode and pushes to MeatHandler
+(`meathandler-server/`, a separate crate), so its ELM327 socket on 35000 is
+closed. The app reads from MeatHandler by default via `meatpi-core::remote`
+(feature `remote`), which maps the dongle's "Kia: EV6" profile names
+(`SOC_D`, `HV_V`, `HV_A`, ...) onto the keys in `profile.rs`. The direct TCP
+path still works if the dongle is put back in ELM327 mode.
 
 Android (see `docs/ANDROID.md`):
 

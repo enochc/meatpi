@@ -10,6 +10,10 @@ pub enum Error {
     NoData,
     /// Nothing arrived before the read deadline.
     Timeout,
+    /// The MeatHandler server answered with an HTTP error.
+    Http(u16),
+    /// The MeatHandler server's reply could not be understood.
+    BadReply(String),
 }
 
 impl fmt::Display for Error {
@@ -19,6 +23,9 @@ impl fmt::Display for Error {
             Error::Adapter(m) => write!(f, "adapter error: {m}"),
             Error::NoData => write!(f, "no data from ECU"),
             Error::Timeout => write!(f, "timed out waiting for adapter"),
+            Error::Http(401) => write!(f, "MeatHandler rejected the username or password"),
+            Error::Http(code) => write!(f, "MeatHandler returned HTTP {code}"),
+            Error::BadReply(m) => write!(f, "unexpected reply from MeatHandler: {m}"),
         }
     }
 }

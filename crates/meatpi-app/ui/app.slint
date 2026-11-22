@@ -21,12 +21,25 @@ export struct Telemetry {
     power-limit-text: string,
     cell-dev-text: string,
     updated-text: string,
+    // "Charging", "Plugged in, not charging", "Not plugged in" or "—".
+    charge-text: string,
+    // Charge rate in kW, positive, or "—" when not charging.
+    charge-rate-text: string,
+    charging: bool,
 }
 
 component Readouts inherits GridLayout {
     in property <Telemetry> data;
     spacing: Theme.gap;
 
+    Row {
+        StatTile {
+            label: "Charging";
+            value: data.charge-text;
+            accent: data.charging ? Theme.accent : Theme.text;
+        }
+        StatTile { label: "Charge rate"; value: data.charge-rate-text; unit: "kW"; accent: Theme.accent; }
+    }
     Row {
         StatTile { label: "Pack voltage"; value: data.pack-voltage-text; unit: "V"; accent: Theme.info; }
         StatTile { label: "Pack current"; value: data.pack-current-text; unit: "A"; accent: Theme.info; }
@@ -68,11 +81,25 @@ export component AppWindow inherits Window {
     in-out property <string> host: "10.43.1.39";
     in-out property <string> port: "35000";
     in-out property <bool> simulate: false;
+    // Read the car through MeatHandler, which the dongle pushes to in AutoPID
+    // mode. Works away from home too. Off means talk to the dongle directly,
+    // which needs it in ELM327 mode.
+    in-out property <bool> remote: true;
+    in-out property <string> remote-url: "https://meathandler.ddns.net:8443";
+    in-out property <string> remote-user: "enoch";
+    in-out property <string> remote-pass: "";
+    // Save the login to the OS secret store after a successful connect.
+    in-out property <bool> remember: true;
+    in property <bool> has-saved-login: false;
     in-out property <bool> show-console: false;
+    // Running in a browser tab served by MeatHandler: the page is already
+    // logged in, so there is nothing to connect and no console.
+    in property <bool> web-mode: false;
 
     callback connect-requested();
     callback disconnect-requested();
     callback command-entered(string);
+    callback forget-requested();
 
     property <bool> narrow: root.width < 820px;
     property <bool> connected: root.link == LinkState.live;
@@ -128,17 +155,39 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                HorizontalLayout {
+                if !root.web-mode: HorizontalLayout {
                     spacing: 8px;
 
-                    LineEdit {
+                    if root.remote: LineEdit {
+                        placeholder-text: "MeatHandler URL";
+                        text <=> root.remote-url;
+                        enabled: !root.connected;
+                        horizontal-stretch: 3;
+                    }
+
+                    if root.remote: LineEdit {
+                        placeholder-text: "User";
+                        text <=> root.remote-user;
+                        enabled: !root.connected;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.remote: LineEdit {
+                        placeholder-text: "Password";
+                        input-type: InputType.password;
+                        text <=> root.remote-pass;
+                        enabled: !root.connected;
+                        horizontal-stretch: 1;
+                    }
+
+                    if !root.remote: LineEdit {
                         placeholder-text: "Adapter address";
                         text <=> root.host;
                         enabled: !root.connected;
                         horizontal-stretch: 2;
                     }
 
-                    LineEdit {
+                    if !root.remote: LineEdit {
                         placeholder-text: "Port";
                         text <=> root.port;
                         enabled: !root.connected;
@@ -162,13 +211,30 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 14px;
 
-                    CheckBox {
+                    if !root.web-mode: CheckBox {
+                        text: "MeatHandler";
+                        checked <=> root.remote;
+                        enabled: !root.connected && !root.simulate;
+                    }
+
+                    if root.remote && !root.simulate && !root.web-mode: CheckBox {
+                        text: "Remember login";
+                        checked <=> root.remember;
+                        enabled: !root.connected;
+                    }
+
+                    if root.remote && root.has-saved-login && !root.web-mode: Button {
+                        text: "Forget login";
+                        clicked => { root.forget-requested(); }
+                    }
+
+                    if !root.web-mode: CheckBox {
                         text: "Simulator";
                         checked <=> root.simulate;
                         enabled: !root.connected;
                     }
 
-                    CheckBox {
+                    if !root.web-mode: CheckBox {
                         text: "Console";
                         checked <=> root.show-console;
                     }
@@ -215,7 +281,8 @@ export component AppWindow inherits Window {
                     soc: root.data.soc;
                     known: root.data.soc-known;
                     soc-text: root.data.soc-text;
-                    caption: root.data.power-text == "—" ? "" : root.data.power-text + " kW";
+                    caption: root.data.charging ? "Charging · " + root.data.charge-rate-text + " kW"
+                        : root.data.power-text == "—" ? "" : root.data.power-text + " kW";
                 }
             }
 
@@ -244,7 +311,8 @@ export component AppWindow inherits Window {
                     soc: root.data.soc;
                     known: root.data.soc-known;
                     soc-text: root.data.soc-text;
-                    caption: root.data.power-text == "—" ? "" : root.data.power-text + " kW";
+                    caption: root.data.charging ? "Charging · " + root.data.charge-rate-text + " kW"
+                        : root.data.power-text == "—" ? "" : root.data.power-text + " kW";
                 }
             }
 
@@ -259,7 +327,7 @@ export component AppWindow inherits Window {
         }
 
         // ---- console ------------------------------------------------------
-        if root.show-console: Rectangle {
+        if root.show-console && !root.web-mode: Rectangle {
             background: Theme.surface;
             border-radius: Theme.radius;
             border-width: 1px;
@@ -287,7 +355,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     entry := LineEdit {
-                        placeholder-text: "ELM327 command, e.g. ATI or 220101";
+                        placeholder-text: root.remote ? "Console needs a direct dongle connection" : "ELM327 command, e.g. ATI or 220101";
                         enabled: root.connected;
                         accepted(cmd) => {
                             root.command-entered(cmd);

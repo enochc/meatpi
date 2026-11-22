@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeatHandler</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f4f5f7; --card:#fff; --muted:#6b7280; --ok:#059669; --warn:#d97706; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111318; --card:#1b1e25; --muted:#9aa1ad; } }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); }
+  header { padding:16px 20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; }
+  .pill { padding:3px 10px; border-radius:999px; font-size:13px; color:#fff; background:var(--muted); }
+  .muted { color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; padding:0 20px 20px; }
+  .tile { background:var(--card); border-radius:10px; padding:12px 14px; }
+  .tile .k { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .tile .v { font-size:24px; font-weight:600; margin-top:4px; word-break:break-all; }
+  .empty { grid-column:1/-1; color:var(--muted); padding:40px 0; text-align:center; }
+  nav { display:flex; gap:4px; margin-left:auto; background:var(--card); border-radius:10px; padding:3px; }
+  nav a { padding:6px 14px; border-radius:8px; color:var(--muted); text-decoration:none; font-size:14px; }
+  nav a.active { background:var(--bg); color:inherit; font-weight:600; }
+  [hidden] { display:none !important; }
+  #app { position:fixed; left:0; right:0; bottom:0; top:var(--header-h, 64px); }
+  #app iframe { width:100%; height:100%; border:0; display:block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MeatHandler</h1>
+  <span id="pill" class="pill">loading</span>
+  <span id="meta" class="muted"></span>
+  <nav>
+    <a href="#values" data-tab="values">Values</a>
+    <a href="#dashboard" data-tab="dashboard">Dashboard</a>
+  </nav>
+</header>
+<main id="tiles" data-panel="values"><div class="empty">Waiting for the first update from the car.</div></main>
+<section id="app" data-panel="dashboard" hidden>
+  <!-- The Slint dashboard compiled to wasm. Loaded on first visit to the tab
+       because it is a few MB. -->
+  <iframe id="app-frame" title="MeatPi dashboard"></iframe>
+</section>
+<script>
+function showTab(name) {
+  if (!document.querySelector(`[data-panel="${name}"]`)) name = "values";
+  document.querySelectorAll("[data-panel]").forEach(p => p.hidden = p.dataset.panel !== name);
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.dataset.tab === name));
+  if (name === "dashboard") {
+    const frame = document.getElementById("app-frame");
+    if (!frame.src) frame.src = "/app/";
+  }
+}
+function placeApp() {
+  const h = document.querySelector("header").getBoundingClientRect().height;
+  document.documentElement.style.setProperty("--header-h", h + "px");
+}
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+window.addEventListener("resize", placeApp);
+placeApp();
+showTab(location.hash.slice(1) || "values");
+
+function ago(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+function fmt(v) {
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, "");
+  if (v === null || v === undefined) return "-";
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+async function refresh() {
+  const pill = document.getElementById("pill");
+  try {
+    const r = await fetch("/api/latest", { cache: "no-store" });
+    const d = await r.json();
+    const keys = Object.keys(d.values);
+    const age = d.last_post ? d.now - d.last_post : null;
+    if (age === null) { pill.textContent = "no data yet"; pill.style.background = "var(--muted)"; }
+    else if (age < 120000) { pill.textContent = "live"; pill.style.background = "var(--ok)"; }
+    else if (age < 3 * 3600000) { pill.textContent = "idle"; pill.style.background = "var(--warn)"; }
+    else { pill.textContent = "asleep"; pill.style.background = "var(--bad)"; }
+    document.getElementById("meta").textContent =
+      (age === null ? "" : "last update " + ago(age) + " · ") + d.posts_24h + " updates in 24h";
+    if (keys.length) {
+      document.getElementById("tiles").innerHTML = keys.map(k =>
+        `<div class="tile"><div class="k"></div><div class="v"></div></div>`).join("");
+      const tiles = document.querySelectorAll(".tile");
+      keys.forEach((k, i) => {
+        tiles[i].querySelector(".k").textContent = k;
+        tiles[i].querySelector(".v").textContent = fmt(d.values[k].value);
+        tiles[i].title = "updated " + ago(d.now - d.values[k].ts);
+      });
+    }
+  } catch (e) {
+    pill.textContent = "server unreachable"; pill.style.background = "var(--bad)";
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

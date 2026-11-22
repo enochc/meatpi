@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeatPi Dashboard</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; overflow: hidden; }
+  /* Slint draws into this canvas and sets an inline width/height at the app's
+     preferred size (1060x720). !important overrides that so the canvas fills the
+     tab; Slint sees the resize and lays the app out to match. */
+  canvas { width: 100% !important; height: 100% !important; display: block; outline: none; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center;
+             color: #8b98a5; font: 14px system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<div id="loading">Loading dashboard…</div>
+<canvas id="canvas" data-slint-auto-resize-to-preferred="false"></canvas>
+<script type="module">
+  import init from "./meatpi_app.js";
+  // The wasm start function runs the Slint event loop, which keeps running
+  // after init resolves (or reports control flow through an exception).
+  init().catch((e) => console.debug(e)).finally(() => {
+    document.getElementById("loading").remove();
+  });
+  setTimeout(() => document.getElementById("loading")?.remove(), 4000);
+</script>
+</body>
+</html>

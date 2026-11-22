@@ -1,0 +1,21 @@
+[Unit]
+Description=MeatHandler WiCAN telemetry receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=meathandler
+Group=meathandler
+EnvironmentFile=/etc/meathandler/env
+ExecStart=/usr/local/bin/meathandler-server
+WorkingDirectory=/var/lib/meathandler
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/meathandler
+
+[Install]
+WantedBy=multi-user.target

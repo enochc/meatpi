@@ -30,18 +30,41 @@ No car required — there is a built-in simulator:
 MEATPI_SIM=1 cargo run
 ```
 
-Against the real dongle:
+Against the car, through MeatHandler (the default):
 
 ```bash
-cargo run
+MEATHANDLER_PASS=... MEATPI_CONNECT=1 cargo run
 ```
 
-Enter the adapter's address and press **Connect**. The default is
-`10.43.1.39:35000` — this dongle runs in station mode on the home network. In
-access-point mode it would be `192.168.0.10` instead.
+The dongle runs in **AutoPID** mode and pushes its readings to the MeatHandler
+server (`meathandler-server/`), and the app reads them from
+`https://meathandler.ddns.net:8443/api/latest`. That works at home or away.
+Use the MeatHandler login (`MH_DASH_USER` / `MH_DASH_PASS` on the Pi), and use
+the hostname rather than the Pi's IP, since only the hostname has the public
+certificate. Without a terminal, type the password into the app.
 
-Useful env vars: `MEATPI_HOST` overrides the address, `MEATPI_CONNECT=1`
-connects on launch, `MEATPI_SIM=1` does both against the simulator.
+After a successful connect the app saves the login (untick **Remember login**
+to skip this) and connects on its own at the next launch. It lives in the
+macOS Keychain / Windows Credential Manager / Linux Secret Service, or on
+Android is encrypted with an AES-GCM key held in the Android Keystore with only
+the ciphertext in app-private storage (`src/secrets/`). **Forget login**
+removes it, and a login the server rejects is dropped automatically.
+
+Talking to the dongle directly (untick **MeatHandler**, or `MEATPI_DIRECT=1`)
+needs it switched back to **ELM327** protocol mode, at `10.43.1.39:35000` in
+station mode or `192.168.0.10` in access-point mode. The console pane only
+works in this mode.
+
+Useful env vars: `MEATHANDLER_URL` / `MEATHANDLER_USER` / `MEATHANDLER_PASS`
+fill in the login, `MEATPI_HOST` overrides the dongle address,
+`MEATPI_CONNECT=1` connects on launch, `MEATPI_SIM=1` does both against the
+simulator.
+
+To check the MeatHandler path without the UI:
+
+```bash
+MEATHANDLER_PASS=... cargo run -p meatpi-core --features remote --example remote_probe
+```
 
 To dump raw frames and decoded values without the UI — this is the tool for
 checking byte offsets:
