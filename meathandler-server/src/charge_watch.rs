@@ -1,14 +1,14 @@
 //! Push a phone notification when the car is plugged in but not charging.
 //!
-//! Charging is detected two ways, either one is enough:
-//! - the `CHARGING` bit from the dongle's "Kia: EV6" profile, and
-//! - pack power (`HV_W`): below -1 kW with the car not moving means energy is
-//!   flowing into the battery. Once charging, it stays "charging" until power
-//!   rises above -300 W, so a brief dip does not end the session.
+//! Charging means pack power (`HV_W`) below -1 kW with the car not moving:
+//! energy is flowing into the battery and it is not regen. Once charging, it
+//! stays "charging" until power rises above -300 W, so a brief dip does not
+//! end the session. "Plugged in" is the VCMS AC plug bit (`AC_PLUG`).
 //!
-//! The power check is a backstop. The dongle profile's original `CHARGING`
-//! and `AC_PLUG` bits were wrong for the 2024 EV6 (they always read 0); the
-//! corrected expressions are in `docs/CHARGE-FLAGS.md` of the meatpi repo.
+//! The dongle's `CHARGING` value is deliberately ignored. The bit it reads
+//! (`220101 B63:1`) turned out to mean "HV system on": it is also set while
+//! driving and when a parked car wakes to top up its 12 V battery, which
+//! produced false "charging started" alerts. See docs/CHARGE-FLAGS.md.
 //!
 //! If the plug is in and charging has not started within
 //! `MH_PLUG_ALERT_SECS` (default 120), it sends one alert for that plug-in.
@@ -70,7 +70,6 @@ const STILL_KMH: f64 = 2.0;
 pub struct Reading {
     pub now: i64,
     pub plug_bit: Option<bool>,
-    pub charging_bit: Option<bool>,
     pub pack_w: Option<f64>,
     pub speed: Option<f64>,
     pub soc: Option<f64>,
@@ -78,9 +77,6 @@ pub struct Reading {
 
 impl Reading {
     fn charging(&self, was_charging: bool) -> bool {
-        if self.charging_bit == Some(true) {
-            return true;
-        }
         let still = self.speed.map_or(true, |s| s < STILL_KMH);
         let threshold = if was_charging { CHARGE_END_W } else { CHARGE_START_W };
         still && self.pack_w.is_some_and(|w| w <= threshold)
@@ -157,13 +153,12 @@ fn read(state: &AppState) -> Option<Reading> {
     let reading = Reading {
         now,
         plug_bit: get("AC_PLUG").map(|v| v >= 0.5),
-        charging_bit: get("CHARGING").map(|v| v >= 0.5),
         pack_w: get("HV_W"),
         speed: get("SPEED"),
         soc: get("SOC_D"),
     };
     // Nothing fresh at all means the dongle is asleep: no opinion.
-    (reading.plug_bit.is_some() || reading.charging_bit.is_some() || reading.pack_w.is_some())
+    (reading.plug_bit.is_some() || reading.pack_w.is_some())
         .then_some(reading)
 }
 
@@ -234,22 +229,10 @@ pub async fn run(state: AppState, cfg: Config) {
 mod tests {
     use super::*;
 
-    fn bits(now_s: i64, plugged: bool, charging: bool) -> Reading {
+    fn r(now_s: i64, plugged: bool, w: f64, kmh: f64) -> Reading {
         Reading {
             now: now_s * 1000,
             plug_bit: Some(plugged),
-            charging_bit: Some(charging),
-            pack_w: Some(0.0),
-            speed: Some(0.0),
-            soc: Some(50.0),
-        }
-    }
-
-    fn power(now_s: i64, w: f64, kmh: f64) -> Reading {
-        Reading {
-            now: now_s * 1000,
-            plug_bit: Some(false),
-            charging_bit: Some(false),
             pack_w: Some(w),
             speed: Some(kmh),
             soc: Some(50.0),
@@ -261,45 +244,49 @@ mod tests {
     #[test]
     fn alerts_once_when_plugged_and_idle() {
         let mut w = Watch::default();
-        assert_eq!(w.step(bits(0, false, false), T), None);
-        assert_eq!(w.step(bits(10, true, false), T), None);
-        assert_eq!(w.step(bits(100, true, false), T), None);
-        assert_eq!(w.step(bits(130, true, false), T), Some(Notice::PluggedNotCharging { soc: Some(50.0) }));
-        assert_eq!(w.step(bits(300, true, false), T), None);
+        assert_eq!(w.step(r(0, false, 0.0, 0.0), T), None);
+        assert_eq!(w.step(r(10, true, 0.0, 0.0), T), None);
+        assert_eq!(w.step(r(100, true, 0.0, 0.0), T), None);
+        assert_eq!(w.step(r(130, true, 0.0, 0.0), T), Some(Notice::PluggedNotCharging { soc: Some(50.0) }));
+        assert_eq!(w.step(r(300, true, 0.0, 0.0), T), None);
         assert_eq!(
-            w.step(bits(310, true, true), T),
+            w.step(r(310, true, -3700.0, 0.0), T),
             Some(Notice::ChargingStarted { soc: Some(50.0), after_alert: true })
         );
     }
 
     #[test]
-    fn detects_charging_from_pack_power_when_the_bits_lie() {
+    fn charging_follows_pack_power_with_hysteresis() {
         let mut w = Watch::default();
-        assert_eq!(w.step(power(0, 150.0, 0.0), T), None);
+        assert_eq!(w.step(r(0, true, 150.0, 0.0), T), None);
         assert_eq!(
-            w.step(power(10, -3700.0, 0.0), T),
+            w.step(r(10, true, -3700.0, 0.0), T),
             Some(Notice::ChargingStarted { soc: Some(50.0), after_alert: false })
         );
-        // A dip to -500 W is still charging (hysteresis)...
-        assert_eq!(w.step(power(20, -500.0, 0.0), T), None);
-        assert_eq!(w.step(power(30, -3700.0, 0.0), T), None);
-        // ...a stop and restart announces again.
-        assert_eq!(w.step(power(40, 100.0, 0.0), T), None);
-        assert!(matches!(w.step(power(50, -3600.0, 0.0), T), Some(Notice::ChargingStarted { .. })));
+        assert_eq!(w.step(r(20, true, -500.0, 0.0), T), None);
+        assert_eq!(w.step(r(30, true, -3700.0, 0.0), T), None);
+        assert_eq!(w.step(r(40, true, 100.0, 0.0), T), None);
+        assert!(matches!(w.step(r(50, true, -3600.0, 0.0), T), Some(Notice::ChargingStarted { .. })));
     }
 
+    /// The three false alarms from 2026-11-21/22, replayed.
     #[test]
-    fn regen_while_driving_is_not_charging() {
+    fn no_alert_for_regen_12v_top_up_or_parked_hvac() {
         let mut w = Watch::default();
-        w.step(power(0, 20_000.0, 60.0), T);
-        assert_eq!(w.step(power(10, -30_000.0, 55.0), T), None);
-        assert_eq!(w.step(power(20, -5_000.0, 40.0), T), None);
+        w.step(r(0, false, 0.0, 0.0), T);
+        // Regen while driving at 27 km/h.
+        assert_eq!(w.step(r(10, false, -2017.0, 27.0), T), None);
+        assert_eq!(w.step(r(20, false, 0.0, 0.0), T), None);
+        // Parked, waking to top up the 12 V battery: power flows out.
+        assert_eq!(w.step(r(30, false, 374.6, 0.0), T), None);
+        // Parked with the car on (HVAC etc.).
+        assert_eq!(w.step(r(40, false, 3664.0, 0.0), T), None);
     }
 
     #[test]
     fn restart_mid_charge_is_silent() {
         let mut w = Watch::default();
-        assert_eq!(w.step(power(0, -3700.0, 0.0), T), None);
-        assert_eq!(w.step(power(10, -3700.0, 0.0), T), None);
+        assert_eq!(w.step(r(0, true, -3700.0, 0.0), T), None);
+        assert_eq!(w.step(r(10, true, -3700.0, 0.0), T), None);
     }
 }

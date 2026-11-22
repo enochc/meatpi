@@ -34,10 +34,11 @@ pub const KEY_MAP: &[(&str, &str)] = &[
     ("REGEN_MAX", "max_regen_kw"),
     ("POWER_MAX", "max_power_kw"),
     ("HV_C_DIFF", "cell_v_deviation"),
-    // 0/1 flags. The stock profile reads these from the wrong byte on the
-    // 2024 EV6; the corrected expressions are in docs/CHARGE-FLAGS.md.
-    ("CHARGING", "charging"),
+    // AC plug in, 0/1 (VCMS bit, see docs/CHARGE-FLAGS.md). The dongle's
+    // `CHARGING` value is not used: its bit means "HV system on", not charging.
     ("AC_PLUG", "plugged"),
+    // km/h. Tells charging apart from regen, which also pushes power in.
+    ("SPEED", "speed"),
 ];
 
 /// One reading of MeatHandler's view of the car.
@@ -141,7 +142,7 @@ mod tests {
         let snap = parse_latest(body).unwrap();
         assert_eq!(snap.sample.soc(), Some(81.5));
         assert_eq!(snap.sample.get("aux_voltage"), Some(14.2));
-        assert!(snap.sample.stale.contains(&"charging"));
+        assert!(snap.sample.stale.contains(&"plugged"));
         assert_eq!(snap.sample.power_kw(), Some(-7.0));
         assert_eq!(snap.age, Some(Duration::from_secs(10)));
         assert!(snap.sample.stale.contains(&"soh"));

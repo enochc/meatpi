@@ -37,14 +37,13 @@ impl Sample {
         self.get("soc_display").or_else(|| self.get("soc_bms"))
     }
 
-    /// Whether the car is charging. Prefers the charging flag and falls back
-    /// to pack power: more than 1 kW flowing into a car that is parked.
-    /// `None` when neither is known.
+    /// Whether the car is charging: more than 1 kW flowing into the pack
+    /// while it is not moving (moving means regen). `None` if power is
+    /// unknown. There is no reliable charging flag on the 2024 EV6; the one
+    /// that looked like it means "HV system on" (docs/CHARGE-FLAGS.md).
     pub fn is_charging(&self) -> Option<bool> {
-        if let Some(flag) = self.get("charging") {
-            return Some(flag >= 0.5);
-        }
-        self.power_kw().map(|kw| kw <= -1.0)
+        let still = self.get("speed").map_or(true, |kmh| kmh < 2.0);
+        self.power_kw().map(|kw| still && kw <= -1.0)
     }
 
     /// Whether a charging cable is plugged in, if the car reports it.
@@ -67,11 +66,11 @@ mod charge_tests {
     use super::Sample;
 
     #[test]
-    fn flag_wins_over_power() {
+    fn regen_while_moving_is_not_charging() {
         let mut s = Sample::default();
         s.insert("pack_voltage", 750.0);
-        s.insert("pack_current", -5.0);
-        s.insert("charging", 0.0);
+        s.insert("pack_current", -20.0);
+        s.insert("speed", 40.0);
         assert_eq!(s.is_charging(), Some(false));
     }
 
