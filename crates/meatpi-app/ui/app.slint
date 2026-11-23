@@ -62,12 +62,327 @@ component Readouts inherits GridLayout {
     }
 }
 
+/// The rounded card every section sits on.
+component Panel inherits Rectangle {
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+}
+
+/// Title, status and connection controls. Lays itself out in one or two rows
+/// on wide screens and as a single column on phones.
+component Header inherits Panel {
+    in property <bool> narrow;
+    in property <bool> web-mode;
+    in property <bool> connected;
+    in property <bool> connecting;
+    in property <bool> has-saved-login;
+    in property <color> link-tint;
+    in property <string> status;
+    in property <string> profile-name;
+    in property <string> updated-text;
+    in-out property <string> host;
+    in-out property <string> port;
+    in-out property <bool> simulate;
+    in-out property <bool> remote;
+    in-out property <string> remote-url;
+    in-out property <string> remote-user;
+    in-out property <string> remote-pass;
+    in-out property <bool> remember;
+    in-out property <bool> show-console;
+    callback connect-clicked();
+    callback forget-requested();
+
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 10px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                Text {
+                    text: "MeatPi Dashboard";
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.profile-name;
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            if !root.narrow: VerticalLayout {
+                alignment: center;
+                StatusPill {
+                    tint: root.link-tint;
+                    text: root.status;
+                }
+            }
+        }
+
+        // On a phone the status gets its own line so it never runs off-screen.
+        if root.narrow: HorizontalLayout {
+            alignment: start;
+            StatusPill {
+                tint: root.link-tint;
+                text: root.status;
+            }
+        }
+
+        // ---- connection fields: one row on wide screens ----
+        if !root.web-mode && !root.narrow: HorizontalLayout {
+            spacing: 8px;
+
+            if root.remote: LineEdit {
+                placeholder-text: "MeatHandler URL";
+                text <=> root.remote-url;
+                enabled: !root.connected;
+                horizontal-stretch: 3;
+            }
+            if root.remote: LineEdit {
+                placeholder-text: "User";
+                text <=> root.remote-user;
+                enabled: !root.connected;
+                horizontal-stretch: 1;
+            }
+            if root.remote: LineEdit {
+                placeholder-text: "Password";
+                input-type: InputType.password;
+                text <=> root.remote-pass;
+                enabled: !root.connected;
+                horizontal-stretch: 1;
+            }
+            if !root.remote: LineEdit {
+                placeholder-text: "Adapter address";
+                text <=> root.host;
+                enabled: !root.connected;
+                horizontal-stretch: 2;
+            }
+            if !root.remote: LineEdit {
+                placeholder-text: "Port";
+                text <=> root.port;
+                enabled: !root.connected;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: root.connected ? "Disconnect" : "Connect";
+                primary: !root.connected;
+                enabled: !root.connecting;
+                clicked => { root.connect-clicked(); }
+            }
+        }
+
+        // ---- ...and stacked on phones ----
+        if !root.web-mode && root.narrow: VerticalLayout {
+            spacing: 8px;
+
+            if root.remote: LineEdit {
+                placeholder-text: "MeatHandler URL";
+                text <=> root.remote-url;
+                enabled: !root.connected;
+            }
+            if root.remote: HorizontalLayout {
+                spacing: 8px;
+                LineEdit {
+                    placeholder-text: "User";
+                    text <=> root.remote-user;
+                    enabled: !root.connected;
+                    horizontal-stretch: 1;
+                }
+                LineEdit {
+                    placeholder-text: "Password";
+                    input-type: InputType.password;
+                    text <=> root.remote-pass;
+                    enabled: !root.connected;
+                    horizontal-stretch: 1;
+                }
+            }
+            if !root.remote: HorizontalLayout {
+                spacing: 8px;
+                LineEdit {
+                    placeholder-text: "Adapter address";
+                    text <=> root.host;
+                    enabled: !root.connected;
+                    horizontal-stretch: 2;
+                }
+                LineEdit {
+                    placeholder-text: "Port";
+                    text <=> root.port;
+                    enabled: !root.connected;
+                    horizontal-stretch: 1;
+                }
+            }
+            Button {
+                text: root.connected ? "Disconnect" : "Connect";
+                primary: !root.connected;
+                enabled: !root.connecting;
+                clicked => { root.connect-clicked(); }
+            }
+        }
+
+        // ---- options: a row on wide screens ----
+        if !root.narrow: HorizontalLayout {
+            spacing: 14px;
+
+            if !root.web-mode: CheckBox {
+                text: "MeatHandler";
+                checked <=> root.remote;
+                enabled: !root.connected && !root.simulate;
+            }
+            if root.remote && !root.simulate && !root.web-mode: CheckBox {
+                text: "Remember login";
+                checked <=> root.remember;
+                enabled: !root.connected;
+            }
+            if root.remote && root.has-saved-login && !root.web-mode: Button {
+                text: "Forget login";
+                clicked => { root.forget-requested(); }
+            }
+            if !root.web-mode: CheckBox {
+                text: "Simulator";
+                checked <=> root.simulate;
+                enabled: !root.connected;
+            }
+            if !root.web-mode: CheckBox {
+                text: "Console";
+                checked <=> root.show-console;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.updated-text;
+                    color: Theme.muted;
+                    font-size: 11px;
+                }
+            }
+        }
+
+        // ---- ...and a column on phones ----
+        if root.narrow: VerticalLayout {
+            spacing: 2px;
+
+            if !root.web-mode: CheckBox {
+                text: "MeatHandler";
+                checked <=> root.remote;
+                enabled: !root.connected && !root.simulate;
+            }
+            if root.remote && !root.simulate && !root.web-mode: CheckBox {
+                text: "Remember login";
+                checked <=> root.remember;
+                enabled: !root.connected;
+            }
+            if !root.web-mode: CheckBox {
+                text: "Simulator";
+                checked <=> root.simulate;
+                enabled: !root.connected;
+            }
+            if !root.web-mode: CheckBox {
+                text: "Console";
+                checked <=> root.show-console;
+            }
+            if root.remote && root.has-saved-login && !root.web-mode: HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: "Forget login";
+                    clicked => { root.forget-requested(); }
+                }
+            }
+            Text {
+                text: root.updated-text;
+                color: Theme.muted;
+                font-size: 11px;
+            }
+        }
+    }
+}
+
+/// The state-of-charge gauge on its card.
+component GaugePanel inherits Panel {
+    in property <Telemetry> data;
+    // Children of a plain Rectangle sit at (0,0), so place the gauge by hand.
+    property <length> inset: 16px;
+
+    SocGauge {
+        x: root.inset;
+        y: root.inset;
+        width: root.width - 2 * root.inset;
+        height: root.height - 2 * root.inset;
+        soc: root.data.soc;
+        known: root.data.soc-known;
+        soc-text: root.data.soc-text;
+        caption: root.data.charging ? "Charging · " + root.data.charge-rate-text + " kW"
+            : root.data.power-text == "—" ? "" : root.data.power-text + " kW";
+    }
+}
+
+/// Raw ELM327 log and command line (direct dongle mode only).
+component Console inherits Panel {
+    in property <[string]> lines;
+    in property <bool> connected;
+    in property <bool> remote;
+    callback command-entered(string);
+
+    height: 190px;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 8px;
+
+        ScrollView {
+            VerticalLayout {
+                alignment: start;
+                for line in root.lines: Text {
+                    text: line;
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-family: "monospace";
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            entry := LineEdit {
+                placeholder-text: root.remote ? "Console needs a direct dongle connection" : "ELM327 command, e.g. ATI or 220101";
+                enabled: root.connected;
+                accepted(cmd) => {
+                    root.command-entered(cmd);
+                    entry.text = "";
+                }
+            }
+            Button {
+                text: "Send";
+                enabled: root.connected;
+                clicked => {
+                    root.command-entered(entry.text);
+                    entry.text = "";
+                }
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "MeatPi Dashboard";
     background: Theme.bg;
     preferred-width: 1060px;
     preferred-height: 720px;
-    min-width: 360px;
+    min-width: 320px;
     min-height: 480px;
 
     in property <LinkState> link: LinkState.disconnected;
@@ -103,272 +418,134 @@ export component AppWindow inherits Window {
 
     property <bool> narrow: root.width < 820px;
     property <bool> connected: root.link == LinkState.live;
+    property <bool> show-console-panel: root.show-console && !root.web-mode;
     property <color> link-tint:
         root.link == LinkState.live ? Theme.accent
         : root.link == LinkState.connecting ? Theme.warn
         : root.link == LinkState.failed ? Theme.danger
         : Theme.muted;
 
-    VerticalLayout {
-        padding: Theme.gap;
-        spacing: Theme.gap;
-
-        // ---- header -------------------------------------------------------
-        Rectangle {
-            background: Theme.surface;
-            border-radius: Theme.radius;
-            border-width: 1px;
-            border-color: Theme.border;
-            vertical-stretch: 0;
-
-            VerticalLayout {
-                padding: 12px;
-                spacing: 10px;
-
-                HorizontalLayout {
-                    spacing: 10px;
-
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 1px;
-                        Text {
-                            text: "MeatPi Dashboard";
-                            color: Theme.text;
-                            font-size: 17px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: root.profile-name;
-                            color: Theme.muted;
-                            font-size: 12px;
-                        }
-                    }
-
-                    Rectangle { horizontal-stretch: 1; }
-
-                    VerticalLayout {
-                        alignment: center;
-                        StatusPill {
-                            tint: root.link-tint;
-                            text: root.status;
-                        }
-                    }
-                }
-
-                if !root.web-mode: HorizontalLayout {
-                    spacing: 8px;
-
-                    if root.remote: LineEdit {
-                        placeholder-text: "MeatHandler URL";
-                        text <=> root.remote-url;
-                        enabled: !root.connected;
-                        horizontal-stretch: 3;
-                    }
-
-                    if root.remote: LineEdit {
-                        placeholder-text: "User";
-                        text <=> root.remote-user;
-                        enabled: !root.connected;
-                        horizontal-stretch: 1;
-                    }
-
-                    if root.remote: LineEdit {
-                        placeholder-text: "Password";
-                        input-type: InputType.password;
-                        text <=> root.remote-pass;
-                        enabled: !root.connected;
-                        horizontal-stretch: 1;
-                    }
-
-                    if !root.remote: LineEdit {
-                        placeholder-text: "Adapter address";
-                        text <=> root.host;
-                        enabled: !root.connected;
-                        horizontal-stretch: 2;
-                    }
-
-                    if !root.remote: LineEdit {
-                        placeholder-text: "Port";
-                        text <=> root.port;
-                        enabled: !root.connected;
-                        horizontal-stretch: 1;
-                    }
-
-                    Button {
-                        text: root.connected ? "Disconnect" : "Connect";
-                        primary: !root.connected;
-                        enabled: root.link != LinkState.connecting;
-                        clicked => {
-                            if (root.connected) {
-                                root.disconnect-requested();
-                            } else {
-                                root.connect-requested();
-                            }
-                        }
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 14px;
-
-                    if !root.web-mode: CheckBox {
-                        text: "MeatHandler";
-                        checked <=> root.remote;
-                        enabled: !root.connected && !root.simulate;
-                    }
-
-                    if root.remote && !root.simulate && !root.web-mode: CheckBox {
-                        text: "Remember login";
-                        checked <=> root.remember;
-                        enabled: !root.connected;
-                    }
-
-                    if root.remote && root.has-saved-login && !root.web-mode: Button {
-                        text: "Forget login";
-                        clicked => { root.forget-requested(); }
-                    }
-
-                    if !root.web-mode: CheckBox {
-                        text: "Simulator";
-                        checked <=> root.simulate;
-                        enabled: !root.connected;
-                    }
-
-                    if !root.web-mode: CheckBox {
-                        text: "Console";
-                        checked <=> root.show-console;
-                    }
-
-                    Rectangle { horizontal-stretch: 1; }
-
-                    VerticalLayout {
-                        alignment: center;
-                        Text {
-                            text: root.data.updated-text;
-                            color: Theme.muted;
-                            font-size: 11px;
-                        }
-                    }
-                }
-            }
+    function toggle-connection() {
+        if (root.connected) {
+            root.disconnect-requested();
+        } else {
+            root.connect-requested();
         }
+    }
 
-        // ---- dashboard ----------------------------------------------------
-        // Both arrangements live inside a plain Rectangle with explicit
-        // minimums. Letting them sit directly in the VerticalLayout would make
-        // the window's layout info depend on `narrow`, which depends on the
-        // window's width — a binding loop Slint warns about.
-        dashboard := Rectangle {
-            vertical-stretch: 1;
+    // Both arrangements live inside a plain Rectangle with explicit minimums.
+    // Letting them sit directly in the window's layout would make the
+    // window's layout info depend on `narrow`, which depends on the window's
+    // width: a binding loop Slint warns about.
+    VerticalLayout {
+        content := Rectangle {
             min-width: 0px;
             min-height: 0px;
 
-        if !root.narrow: HorizontalLayout {
-            width: dashboard.width;
-            height: dashboard.height;
-            spacing: Theme.gap;
+            // ---- wide: header on top, gauge and tiles side by side ----
+            if !root.narrow: VerticalLayout {
+                width: content.width;
+                height: content.height;
+                padding: Theme.gap;
+                spacing: Theme.gap;
 
-            Rectangle {
-                background: Theme.surface;
-                border-radius: Theme.radius;
-                border-width: 1px;
-                border-color: Theme.border;
-                horizontal-stretch: 1;
-
-                SocGauge {
-                    width: parent.width - 32px;
-                    height: parent.height - 32px;
-                    soc: root.data.soc;
-                    known: root.data.soc-known;
-                    soc-text: root.data.soc-text;
-                    caption: root.data.charging ? "Charging · " + root.data.charge-rate-text + " kW"
-                        : root.data.power-text == "—" ? "" : root.data.power-text + " kW";
-                }
-            }
-
-            Readouts {
-                data: root.data;
-                horizontal-stretch: 1;
-            }
-        }
-
-        if root.narrow: VerticalLayout {
-            width: dashboard.width;
-            height: dashboard.height;
-            spacing: Theme.gap;
-
-            Rectangle {
-                background: Theme.surface;
-                border-radius: Theme.radius;
-                border-width: 1px;
-                border-color: Theme.border;
-                height: 260px;
-                vertical-stretch: 0;
-
-                SocGauge {
-                    width: parent.width - 24px;
-                    height: parent.height - 24px;
-                    soc: root.data.soc;
-                    known: root.data.soc-known;
-                    soc-text: root.data.soc-text;
-                    caption: root.data.charging ? "Charging · " + root.data.charge-rate-text + " kW"
-                        : root.data.power-text == "—" ? "" : root.data.power-text + " kW";
-                }
-            }
-
-            ScrollView {
-                Readouts {
-                    width: parent.width;
-                    data: root.data;
-                }
-            }
-        }
-
-        }
-
-        // ---- console ------------------------------------------------------
-        if root.show-console && !root.web-mode: Rectangle {
-            background: Theme.surface;
-            border-radius: Theme.radius;
-            border-width: 1px;
-            border-color: Theme.border;
-            height: 190px;
-            vertical-stretch: 0;
-
-            VerticalLayout {
-                padding: 10px;
-                spacing: 8px;
-
-                ScrollView {
-                    VerticalLayout {
-                        alignment: start;
-                        for line in root.log-lines: Text {
-                            text: line;
-                            color: Theme.muted;
-                            font-size: 12px;
-                            font-family: "monospace";
-                            wrap: word-wrap;
-                        }
-                    }
+                Header {
+                    narrow: false;
+                    web-mode: root.web-mode;
+                    connected: root.connected;
+                    connecting: root.link == LinkState.connecting;
+                    has-saved-login: root.has-saved-login;
+                    link-tint: root.link-tint;
+                    status: root.status;
+                    profile-name: root.profile-name;
+                    updated-text: root.data.updated-text;
+                    host <=> root.host;
+                    port <=> root.port;
+                    simulate <=> root.simulate;
+                    remote <=> root.remote;
+                    remote-url <=> root.remote-url;
+                    remote-user <=> root.remote-user;
+                    remote-pass <=> root.remote-pass;
+                    remember <=> root.remember;
+                    show-console <=> root.show-console;
+                    connect-clicked => { root.toggle-connection(); }
+                    forget-requested => { root.forget-requested(); }
                 }
 
                 HorizontalLayout {
-                    spacing: 8px;
-                    entry := LineEdit {
-                        placeholder-text: root.remote ? "Console needs a direct dongle connection" : "ELM327 command, e.g. ATI or 220101";
-                        enabled: root.connected;
-                        accepted(cmd) => {
-                            root.command-entered(cmd);
-                            entry.text = "";
-                        }
+                    vertical-stretch: 1;
+                    spacing: Theme.gap;
+                    GaugePanel {
+                        data: root.data;
+                        horizontal-stretch: 1;
                     }
-                    Button {
-                        text: "Send";
-                        enabled: root.connected;
-                        clicked => {
-                            root.command-entered(entry.text);
-                            entry.text = "";
-                        }
+                    Readouts {
+                        data: root.data;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                if root.show-console-panel: Console {
+                    lines: root.log-lines;
+                    connected: root.connected;
+                    remote: root.remote;
+                    command-entered(cmd) => { root.command-entered(cmd); }
+                }
+            }
+
+            // ---- narrow (phones): one column, and the whole page scrolls ----
+            // A plain Flickable rather than the std ScrollView: the Fluent
+            // ScrollView sets `interactive: false` (desktop: wheel and
+            // scrollbar only), so it ignores finger drags on a phone. A
+            // Flickable takes both drags and the mouse wheel.
+            if root.narrow: Flickable {
+                width: content.width;
+                height: content.height;
+                viewport-width: content.width;
+                viewport-height: column.preferred-height;
+
+                column := VerticalLayout {
+                    width: content.width;
+                    padding: Theme.gap;
+                    spacing: Theme.gap;
+
+                    Header {
+                        narrow: true;
+                        web-mode: root.web-mode;
+                        connected: root.connected;
+                        connecting: root.link == LinkState.connecting;
+                        has-saved-login: root.has-saved-login;
+                        link-tint: root.link-tint;
+                        status: root.status;
+                        profile-name: root.profile-name;
+                        updated-text: root.data.updated-text;
+                        host <=> root.host;
+                        port <=> root.port;
+                        simulate <=> root.simulate;
+                        remote <=> root.remote;
+                        remote-url <=> root.remote-url;
+                        remote-user <=> root.remote-user;
+                        remote-pass <=> root.remote-pass;
+                        remember <=> root.remember;
+                        show-console <=> root.show-console;
+                        connect-clicked => { root.toggle-connection(); }
+                        forget-requested => { root.forget-requested(); }
+                    }
+
+                    GaugePanel {
+                        data: root.data;
+                        height: 260px;
+                    }
+
+                    Readouts {
+                        data: root.data;
+                    }
+
+                    if root.show-console-panel: Console {
+                        lines: root.log-lines;
+                        connected: root.connected;
+                        remote: root.remote;
+                        command-entered(cmd) => { root.command-entered(cmd); }
                     }
                 }
             }

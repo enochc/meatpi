@@ -51,7 +51,12 @@ async fn fetch_latest() -> Result<String, String> {
 
 fn run_web() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
-    ui.set_web_mode(true);
+    // `?controls` shows the native connection controls. They do nothing in
+    // the browser; it exists to check the phone layout in a headless browser.
+    let show_controls = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .is_some_and(|q| q.contains("controls"));
+    ui.set_web_mode(!show_controls);
     ui.set_profile_name(KIA_EV6.name.into());
     ui.set_link(LinkState::Connecting);
     ui.set_status("Loading from MeatHandler…".into());
