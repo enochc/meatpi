@@ -93,6 +93,7 @@ component Header inherits Panel {
     in-out property <bool> show-console;
     callback connect-clicked();
     callback forget-requested();
+    callback home-clicked();
 
     vertical-stretch: 0;
 
@@ -120,6 +121,16 @@ component Header inherits Panel {
             }
 
             Rectangle { horizontal-stretch: 1; }
+
+            // Home Assistant. Hidden in the browser build: the MeatHandler
+            // page around it has its own Home link.
+            if !root.web-mode: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: "Home";
+                    clicked => { root.home-clicked(); }
+                }
+            }
 
             if !root.narrow: VerticalLayout {
                 alignment: center;
@@ -415,6 +426,12 @@ export component AppWindow inherits Window {
     callback disconnect-requested();
     callback command-entered(string);
     callback forget-requested();
+    // Home button. On Android, `ha-prompt` is raised when the Home Assistant
+    // app is not installed.
+    callback home-requested();
+    callback ha-install-requested();
+    callback ha-browser-requested();
+    in-out property <bool> ha-prompt: false;
 
     property <bool> narrow: root.width < 820px;
     property <bool> connected: root.link == LinkState.live;
@@ -470,6 +487,7 @@ export component AppWindow inherits Window {
                     show-console <=> root.show-console;
                     connect-clicked => { root.toggle-connection(); }
                     forget-requested => { root.forget-requested(); }
+                    home-clicked => { root.home-requested(); }
                 }
 
                 HorizontalLayout {
@@ -530,6 +548,7 @@ export component AppWindow inherits Window {
                         show-console <=> root.show-console;
                         connect-clicked => { root.toggle-connection(); }
                         forget-requested => { root.forget-requested(); }
+                        home-clicked => { root.home-requested(); }
                     }
 
                     GaugePanel {
@@ -546,6 +565,63 @@ export component AppWindow inherits Window {
                         connected: root.connected;
                         remote: root.remote;
                         command-entered(cmd) => { root.command-entered(cmd); }
+                    }
+                }
+            }
+        }
+    }
+
+    // "Home Assistant app not installed" prompt, over everything else.
+    if root.ha-prompt: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        background: #000000a0;
+        // Swallow taps so nothing behind the prompt reacts.
+        TouchArea {}
+
+        Rectangle {
+            width: min(root.width - 2 * Theme.gap, 420px);
+            height: prompt.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.surface;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            prompt := VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                Text {
+                    text: "Home Assistant app not installed";
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Install it for one-tap access. Sign in once with https://meathandler.ddns.net:8444 and it stays signed in. Or open Home Assistant in the browser for now.";
+                    color: Theme.muted;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.ha-prompt = false; }
+                    }
+                    Button {
+                        text: "Open in browser";
+                        clicked => { root.ha-browser-requested(); }
+                    }
+                    Button {
+                        text: "Install";
+                        primary: true;
+                        clicked => { root.ha-install-requested(); }
                     }
                 }
             }

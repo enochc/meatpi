@@ -54,9 +54,16 @@ if [ -f "$CERTS/public.crt" ]; then
   set_default MH_PUBLIC_KEY "$CERTS/public.key"
 fi
 set_default MH_WEB_DIR /usr/local/share/meathandler/web
+# How often a post is kept in history (latest values always update).
+set_default MH_HISTORY_DRIVING_SECS 0
+set_default MH_HISTORY_CHARGING_SECS 60
+set_default MH_HISTORY_IDLE_SECS 600
 set_default MH_HTTP_ADDR 0.0.0.0:8080
 set_default MH_HTTPS_ADDR 0.0.0.0:8443
 set_default RUST_LOG info
+# Home Assistant on its own HTTPS port. Forward this port on the router too.
+set_default MH_HA_UPSTREAM 10.43.1.77:80
+set_default MH_HA_ADDR 0.0.0.0:8444
 # Phone alerts via ntfy. The topic name is the secret, so make it unguessable.
 set_default MH_NTFY_TOPIC "meathandler-$(openssl rand -hex 12)"
 set_default MH_PLUG_ALERT_SECS 120
@@ -74,6 +81,7 @@ systemctl --no-pager --lines=5 status meathandler || true
 echo
 echo "Dashboard:  https://$PUBLIC_HOST:8443/  (or http://$HOST_IP:8080/ at home)"
 echo "Login:      $(grep ^MH_DASH_USER= "$ENV" | cut -d= -f2) / $(grep ^MH_DASH_PASS= "$ENV" | cut -d= -f2)"
+echo "Home Assistant: https://$PUBLIC_HOST:8444/"
 echo "WiCAN token: $(grep ^MH_TOKEN= "$ENV" | cut -d= -f2)"
 TOPIC="$(grep ^MH_NTFY_TOPIC= "$ENV" | cut -d= -f2)"
 echo "ntfy topic: $TOPIC   (subscribe to this in the ntfy app)"

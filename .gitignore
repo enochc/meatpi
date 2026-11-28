@@ -8,3 +8,7 @@
 # WiCAN config exports contain sta_pass, ap_pass and ble_pass in plaintext.
 config_*.json
 docs/config_*.json
+
+# Local tool settings
+.claude/
+.idea/

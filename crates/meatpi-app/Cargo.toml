@@ -68,6 +68,14 @@ uses_cleartext_traffic = true
 min_sdk_version = 26
 target_sdk_version = 34
 
+# Android 11+ hides other apps unless they are listed here, so without this
+# the Home button cannot see the Home Assistant app (src/home.rs).
+[package.metadata.android.queries]
+package = [
+    { name = "io.homeassistant.companion.android" },
+    { name = "io.homeassistant.companion.android.minimal" },
+]
+
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 

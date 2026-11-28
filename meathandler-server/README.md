@@ -14,9 +14,7 @@ Data lives in SQLite at `/var/lib/meathandler/meathandler.db`.
 ## Build (Pi is 32-bit armv7, Raspbian trixie)
 
 ```bash
-rustup target add armv7-unknown-linux-gnueabihf
-pip install ziglang cargo-zigbuild
-cargo zigbuild --release --target armv7-unknown-linux-gnueabihf.2.36
+cross build --release --target armv7-unknown-linux-gnueabihf
 cargo test
 ```
 
@@ -59,6 +57,21 @@ The dashboard and read API use HTTP Basic auth (`MH_DASH_USER` / `MH_DASH_PASS`
 in `/etc/meathandler/env`). Only port-forward 8443; keep 8080 on the LAN since
 it is plain HTTP.
 
+## 12 V battery alerts
+
+Two sources, both sent through ntfy:
+
+- **Regular posts:** if `LV_V` reads under `MH_LOW_12V` (default 12.2 V), one
+  alert per low spell (re-arms at 12.6 V). Only works while the dongle is
+  polling, which with Automate's minimum at 13 V means almost never while
+  parked, so this is a backstop.
+- **The WiCAN's own battery monitor:** while asleep it checks its supply
+  voltage and, under its threshold, publishes over MQTT. `sudo
+  ./setup-mqtt.sh` installs a LAN-only Mosquitto, sets `MH_MQTT_*`, and writes
+  the WiCAN's Battery Alert settings to `~/meathandler-install/wican-mqtt.txt`.
+  `src/battery_mqtt.rs` forwards those messages (at most every 6 h unless the
+  voltage drops another 0.2 V).
+
 ## Web dashboard tab
 
 The page at `/` has two tabs: **Values** (the plain tile list) and
@@ -93,3 +106,17 @@ plug-in produces no alert. A full battery or a charging schedule also reads as
 "plugged in, not charging".
 
 Logs: `journalctl -u meathandler -f`
+
+## Home Assistant from outside
+
+With `MH_HA_UPSTREAM` set (the installer defaults it to `10.43.1.77:80`),
+the server also listens on `MH_HA_ADDR` (default `:8444`) and forwards that
+port to Home Assistant over the LAN, using the same certificates as `:8443`.
+The dashboard header has a **Home** link to it.
+
+- Router: forward TCP 8444 to 10.43.1.57:8444, next to the existing 8443.
+- Home Assistant does its own login on that port. Turn on two-factor
+  authentication for every Home Assistant user.
+- Home Assistant sees every remote client as 10.43.1.57, so no
+  `trusted_proxies` entry is needed. Leave `ip_ban_enabled` off, or one bad
+  login would ban the proxy and lock everyone out.

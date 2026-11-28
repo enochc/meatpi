@@ -28,7 +28,8 @@ Android (see `docs/ANDROID.md`):
 
 ```bash
 source scripts/android-env.sh
-cargo apk run -p meatpi-app --lib     # --lib: entry point is android_main
+scripts/android-run.sh                # pick the device, then cargo apk run
+cargo apk run -p meatpi-app --lib     # --lib: entry point is android_main; installs on whatever adb picks
 cargo check --target aarch64-linux-android -p meatpi-app
 ```
 

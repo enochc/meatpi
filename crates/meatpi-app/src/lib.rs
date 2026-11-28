@@ -1,4 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
+mod home;
+#[cfg(not(target_arch = "wasm32"))]
 mod secrets;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -81,6 +83,40 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if let Some(ui) = ui.upgrade() {
                 ui.set_remote_pass("".into());
                 ui.set_has_saved_login(false);
+            }
+        }
+    });
+
+    // Home: the Home Assistant app on Android (offering the Play Store or the
+    // browser if it is missing), the browser everywhere else.
+    ui.on_home_requested({
+        let ui = ui.as_weak();
+        move || {
+            let Some(ui) = ui.upgrade() else { return };
+            match home::open_app(&home::ha_url(&ui.get_remote_url())) {
+                Ok(home::Launch::Opened) => {}
+                Ok(home::Launch::NotInstalled) => ui.set_ha_prompt(true),
+                Err(e) => push_log(&ui, format!("Home Assistant: {e}")),
+            }
+        }
+    });
+    ui.on_ha_install_requested({
+        let ui = ui.as_weak();
+        move || {
+            let Some(ui) = ui.upgrade() else { return };
+            ui.set_ha_prompt(false);
+            if let Err(e) = home::open_store() {
+                push_log(&ui, format!("Play Store: {e}"));
+            }
+        }
+    });
+    ui.on_ha_browser_requested({
+        let ui = ui.as_weak();
+        move || {
+            let Some(ui) = ui.upgrade() else { return };
+            ui.set_ha_prompt(false);
+            if let Err(e) = home::open_url(&home::ha_url(&ui.get_remote_url())) {
+                push_log(&ui, format!("Home Assistant: {e}"));
             }
         }
     });
@@ -270,6 +306,7 @@ fn android_main(app: slint::android::AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Debug),
     );
     secrets::init(&app);
+    home::init(app.clone());
     slint::android::init(app).expect("failed to initialise the Android backend");
     if let Err(e) = run() {
         log::error!("app exited: {e}");

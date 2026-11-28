@@ -33,6 +33,7 @@
   <nav>
     <a href="#values" data-tab="values">Values</a>
     <a href="#dashboard" data-tab="dashboard">Dashboard</a>
+    <a id="ha-link" href="https://meathandler.ddns.net:8444/" target="_blank" rel="noopener">Home</a>
   </nav>
 </header>
 <main id="tiles" data-panel="values"><div class="empty">Waiting for the first update from the car.</div></main>
@@ -55,6 +56,8 @@ function placeApp() {
   const h = document.querySelector("header").getBoundingClientRect().height;
   document.documentElement.style.setProperty("--header-h", h + "px");
 }
+// Home Assistant is on :8444 of whatever host served this page.
+document.getElementById("ha-link").href = `https://${location.hostname}:8444/`;
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 window.addEventListener("resize", placeApp);
 placeApp();

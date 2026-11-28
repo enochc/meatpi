@@ -17,6 +17,16 @@
 ## Build and run
 
 ```bash
+scripts/android-run.sh
+```
+
+It lists the connected devices by maker and model (the phone and the NXP board
+both show up when the board is on ADB over TCP), asks which one to use, and
+runs `cargo apk run -p meatpi-app --lib` against only that device. Pass a
+serial from `adb devices` to skip the question. The underlying command, which
+installs on whatever adb picks:
+
+```bash
 source scripts/android-env.sh
 cargo apk run -p meatpi-app --lib
 ```

@@ -8,6 +8,9 @@
 //! - HTTPS (default :8443) for the dongle, which refuses plain http:// URLs.
 //! - HTTP  (default :8080) for the LAN dashboard and curl testing.
 //!
+//! With `MH_HA_UPSTREAM` set (e.g. 10.43.1.77:80), a third HTTPS port
+//! (`MH_HA_ADDR`, default :8444) forwards to Home Assistant (see ha_proxy.rs).
+//!
 //! Ingest needs `Authorization: Bearer $MH_TOKEN`. The dashboard and read
 //! API need HTTP Basic auth when `MH_DASH_PASS` is set.
 //!
@@ -42,7 +45,9 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tracing_subscriber::EnvFilter;
 
+mod battery_mqtt;
 mod charge_watch;
+mod ha_proxy;
 
 const SCHEMA: &str = "
 PRAGMA journal_mode=WAL;
@@ -61,6 +66,71 @@ pub(crate) struct AppState {
     token: Option<String>,
     /// Expected `user:pass` for the dashboard, if read auth is on.
     dash_auth: Option<String>,
+    history: Arc<HistoryPolicy>,
+}
+
+/// What the car is doing, judged from one post. Decides how often a post is
+/// kept in the `samples` history; `latest` is always updated.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CarState {
+    Driving,
+    Charging,
+    Idle,
+}
+
+fn car_state(payload: &Value) -> CarState {
+    let values = payload.get("autopid_data").or_else(|| payload.get("metrics"));
+    let num = |k: &str| values.and_then(|v| v.get(k)).and_then(Value::as_f64);
+    let speed = num("SPEED").unwrap_or(0.0);
+    if speed >= 2.0 {
+        return CarState::Driving;
+    }
+    // Same rule as charge_watch: > 1 kW into the pack with the car still.
+    if num("HV_W").is_some_and(|w| w <= -1000.0) {
+        return CarState::Charging;
+    }
+    CarState::Idle
+}
+
+/// The dongle posts every 10 s whenever it is awake, and it has no way to
+/// change that by state. Keeping every post would mean ~8,600 history rows of
+/// ~65 values each per day of charging, on an SD card. So history is thinned
+/// here: every post while driving, one a minute while charging, one every ten
+/// minutes otherwise. Intervals come from MH_HISTORY_{DRIVING,CHARGING,IDLE}_SECS.
+struct HistoryPolicy {
+    driving_ms: i64,
+    charging_ms: i64,
+    idle_ms: i64,
+    last_written: Mutex<i64>,
+}
+
+impl HistoryPolicy {
+    fn from_env(last_written: i64) -> Self {
+        let secs = |k: &str, d: i64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d) * 1000;
+        Self {
+            driving_ms: secs("MH_HISTORY_DRIVING_SECS", 0),
+            charging_ms: secs("MH_HISTORY_CHARGING_SECS", 60),
+            idle_ms: secs("MH_HISTORY_IDLE_SECS", 600),
+            last_written: Mutex::new(last_written),
+        }
+    }
+
+    /// Whether a post at `now` in `state` should go into history. Claims the
+    /// slot if so.
+    fn due(&self, state: CarState, now: i64) -> bool {
+        let every = match state {
+            CarState::Driving => self.driving_ms,
+            CarState::Charging => self.charging_ms,
+            CarState::Idle => self.idle_ms,
+        };
+        let mut last = self.last_written.lock().unwrap_or_else(|p| p.into_inner());
+        if now - *last >= every {
+            *last = now;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -96,10 +166,21 @@ async fn main() -> anyhow::Result<()> {
     if dash_auth.is_none() {
         tracing::warn!("MH_DASH_PASS is not set, dashboard is readable by anyone who can reach it");
     }
-    let state = AppState { db: Arc::new(Mutex::new(conn)), token, dash_auth };
+    let last_history: i64 = conn
+        .query_row("SELECT COALESCE(MAX(ts), 0) FROM samples", [], |r| r.get(0))
+        .unwrap_or(0);
+    let history_policy = Arc::new(HistoryPolicy::from_env(last_history));
+    let state = AppState { db: Arc::new(Mutex::new(conn)), token, dash_auth, history: history_policy };
     match charge_watch::Config::from_env() {
         Some(cfg) => {
-            tokio::spawn(charge_watch::run(state.clone(), cfg));
+            let cfg = Arc::new(cfg);
+            tokio::spawn(charge_watch::run(state.clone(), cfg.clone()));
+            match battery_mqtt::MqttConfig::from_env() {
+                Some(mqtt) => {
+                    tokio::spawn(battery_mqtt::run(mqtt, cfg));
+                }
+                None => tracing::info!("MH_MQTT_HOST not set, dongle battery alerts off"),
+            }
         }
         None => tracing::info!("MH_NTFY_TOPIC not set, charge alerts off"),
     }
@@ -127,6 +208,19 @@ async fn main() -> anyhow::Result<()> {
     let http_addr: SocketAddr = env_or("MH_HTTP_ADDR", "0.0.0.0:8080").parse()?;
     let https_addr: SocketAddr = env_or("MH_HTTPS_ADDR", "0.0.0.0:8443").parse()?;
     let tls = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config()?));
+
+    if let Some(upstream) = std::env::var("MH_HA_UPSTREAM").ok().filter(|u| !u.trim().is_empty()) {
+        let ha_addr: SocketAddr = env_or("MH_HA_ADDR", "0.0.0.0:8444").parse()?;
+        // Bytes are piped straight to Home Assistant, which only speaks HTTP/1.1.
+        let mut ha_tls = tls_config()?;
+        ha_tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let ha_tls = Arc::new(ha_tls);
+        tokio::spawn(async move {
+            if let Err(e) = ha_proxy::run(ha_addr, upstream, ha_tls).await {
+                tracing::error!("home assistant proxy stopped: {e:#}");
+            }
+        });
+    }
 
     tracing::info!(%http_addr, %https_addr, %db_path, "meathandler listening");
     let http = axum_server::bind(http_addr).serve(app.clone().into_make_service());
@@ -237,7 +331,12 @@ fn redact(v: Value) -> Value {
     }
 }
 
-fn store(db: &mut Connection, payload: &Value, bytes: usize) -> rusqlite::Result<usize> {
+fn store(
+    db: &mut Connection,
+    payload: &Value,
+    bytes: usize,
+    keep_history: bool,
+) -> rusqlite::Result<usize> {
     let ts = now_ms();
     let tx = db.transaction()?;
     let mut count = 0;
@@ -251,7 +350,7 @@ fn store(db: &mut Connection, payload: &Value, bytes: usize) -> rusqlite::Result
                  ON CONFLICT(key) DO UPDATE SET ts = excluded.ts, value = excluded.value",
                 params![name, ts, val.to_string()],
             )?;
-            if let Some(f) = val.as_f64() {
+            if let Some(f) = val.as_f64().filter(|_| keep_history) {
                 tx.execute("INSERT INTO samples(ts, key, value) VALUES (?1, ?2, ?3)", params![ts, name, f])?;
             }
             count += 1;
@@ -287,13 +386,15 @@ async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Bytes) 
             return (StatusCode::BAD_REQUEST, "bad json").into_response();
         }
     };
+    let car = car_state(&payload);
+    let keep_history = state.history.due(car, now_ms());
     let result = {
         let mut db = state.db.lock().unwrap_or_else(|p| p.into_inner());
-        store(&mut db, &payload, body.len())
+        store(&mut db, &payload, body.len(), keep_history)
     };
     match result {
         Ok(n) => {
-            tracing::info!(values = n, bytes = body.len(), "ingest");
+            tracing::info!(values = n, bytes = body.len(), ?car, keep_history, "ingest");
             Json(json!({ "ok": true, "values": n })).into_response()
         }
         Err(e) => {
@@ -377,6 +478,31 @@ async fn device(State(state): State<AppState>) -> Response {
 mod tests {
     use super::*;
 
+    #[test]
+    fn history_is_thinned_by_car_state() {
+        let p = HistoryPolicy { driving_ms: 0, charging_ms: 60_000, idle_ms: 600_000, last_written: Mutex::new(0) };
+        let drive = json!({ "autopid_data": { "SPEED": 50, "HV_W": 20000 } });
+        let charge = json!({ "autopid_data": { "SPEED": 0, "HV_W": -3700 } });
+        let idle = json!({ "autopid_data": { "SPEED": 0, "HV_W": 300 } });
+        assert_eq!(car_state(&drive), CarState::Driving);
+        assert_eq!(car_state(&charge), CarState::Charging);
+        assert_eq!(car_state(&idle), CarState::Idle);
+        // Regen while moving is driving, not charging.
+        assert_eq!(car_state(&json!({ "autopid_data": { "SPEED": 30, "HV_W": -9000 } })), CarState::Driving);
+
+        let t0 = 1_000_000_000;
+        assert!(p.due(CarState::Driving, t0));
+        assert!(p.due(CarState::Driving, t0 + 10_000));
+        // Charging: one per minute.
+        assert!(!p.due(CarState::Charging, t0 + 20_000));
+        assert!(p.due(CarState::Charging, t0 + 70_000));
+        assert!(!p.due(CarState::Charging, t0 + 120_000));
+        assert!(p.due(CarState::Charging, t0 + 130_000));
+        // Idle: one per ten minutes.
+        assert!(!p.due(CarState::Idle, t0 + 400_000));
+        assert!(p.due(CarState::Idle, t0 + 730_000));
+    }
+
     fn mem() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();
@@ -391,11 +517,13 @@ mod tests {
             "config": { "SOC": { "class": "battery", "unit": "%" } },
             "status": { "device_id": "14c19fd9573d", "sta_pass": "hunter2", "sta_ip": "10.43.1.39" }
         });
-        assert_eq!(store(&mut db, &boot, 10).unwrap(), 2);
-        assert_eq!(store(&mut db, &json!({ "autopid_data": { "SOC": 81.0 } }), 10).unwrap(), 1);
+        assert_eq!(store(&mut db, &boot, 10, true).unwrap(), 2);
+        assert_eq!(store(&mut db, &json!({ "autopid_data": { "SOC": 81.0 } }), 10, true).unwrap(), 1);
+        // A thinned-out post still updates `latest` but adds no history.
+        assert_eq!(store(&mut db, &json!({ "autopid_data": { "SOC": 80.5 } }), 10, false).unwrap(), 1);
 
         let soc: String = db.query_row("SELECT value FROM latest WHERE key = 'SOC'", [], |r| r.get(0)).unwrap();
-        assert_eq!(soc, "81.0");
+        assert_eq!(soc, "80.5");
         let n: i64 = db.query_row("SELECT COUNT(*) FROM samples WHERE key = 'SOC'", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 2);
         let status: String = db.query_row("SELECT status FROM device", [], |r| r.get(0)).unwrap();

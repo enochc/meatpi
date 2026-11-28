@@ -123,9 +123,8 @@ without a display and is shared verbatim by both targets.
 Short version:
 
 ```bash
-source scripts/android-env.sh
 cargo install cargo-apk        # once
-cargo apk run -p meatpi-app --lib
+scripts/android-run.sh         # asks which device, then builds and installs
 ```
 
 Full instructions, including the Wi-Fi routing gotcha that will otherwise make

@@ -38,6 +38,9 @@ pub struct Config {
     pub topic: String,
     pub alert_after_ms: i64,
     pub announce_start: bool,
+    /// 12 V reading below which to warn (MH_LOW_12V, default 12.2 V: about
+    /// half charge for a resting lead-acid battery).
+    pub low_12v: f64,
 }
 
 impl Config {
@@ -55,6 +58,7 @@ impl Config {
             topic: topic.trim().to_string(),
             alert_after_ms: secs * 1000,
             announce_start: std::env::var("MH_NOTIFY_CHARGE_START").map_or(true, |v| v != "0"),
+            low_12v: std::env::var("MH_LOW_12V").ok().and_then(|v| v.parse().ok()).unwrap_or(12.2),
         })
     }
 }
@@ -73,6 +77,8 @@ pub struct Reading {
     pub pack_w: Option<f64>,
     pub speed: Option<f64>,
     pub soc: Option<f64>,
+    /// 12 V battery (`LV_V`).
+    pub lv_v: Option<f64>,
 }
 
 impl Reading {
@@ -87,7 +93,11 @@ impl Reading {
 pub enum Notice {
     PluggedNotCharging { soc: Option<f64> },
     ChargingStarted { soc: Option<f64>, after_alert: bool },
+    Low12V { volts: f64 },
 }
+
+/// A 12 V warning is cleared once the battery reads at least this much again.
+const LOW_12V_CLEAR: f64 = 12.6;
 
 /// The decision logic, kept free of I/O so it can be tested.
 #[derive(Default)]
@@ -95,9 +105,23 @@ pub struct Watch {
     was_charging: Option<bool>,
     plugged_since: Option<i64>,
     alerted: bool,
+    low_12v_alerted: bool,
 }
 
 impl Watch {
+    /// One warning per low spell: fires when the 12 V reads under `limit`,
+    /// re-arms only after it recovers to `LOW_12V_CLEAR`.
+    pub fn step_12v(&mut self, r: &Reading, limit: f64) -> Option<Notice> {
+        let v = r.lv_v?;
+        if v >= LOW_12V_CLEAR {
+            self.low_12v_alerted = false;
+        } else if v < limit && !self.low_12v_alerted {
+            self.low_12v_alerted = true;
+            return Some(Notice::Low12V { volts: v });
+        }
+        None
+    }
+
     pub fn step(&mut self, r: Reading, alert_after_ms: i64) -> Option<Notice> {
         // The first reading after startup only sets the baseline, so a
         // restart in the middle of a charge does not announce anything.
@@ -156,6 +180,7 @@ fn read(state: &AppState) -> Option<Reading> {
         pack_w: get("HV_W"),
         speed: get("SPEED"),
         soc: get("SOC_D"),
+        lv_v: get("LV_V"),
     };
     // Nothing fresh at all means the dongle is asleep: no opinion.
     (reading.plug_bit.is_some() || reading.pack_w.is_some())
@@ -164,6 +189,21 @@ fn read(state: &AppState) -> Option<Reading> {
 
 fn soc_text(soc: Option<f64>) -> String {
     soc.map(|s| format!(" Battery at {s:.0}%.")).unwrap_or_default()
+}
+
+/// Post one ntfy notification. Blocking; call from a blocking task.
+pub fn notify(cfg: &Config, title: &str, body: &str, priority: &str, tags: &str) {
+    let url = format!("{}/{}", cfg.server, cfg.topic);
+    let result = ureq::post(&url)
+        .timeout(Duration::from_secs(15))
+        .set("Title", title)
+        .set("Priority", priority)
+        .set("Tags", tags)
+        .send_string(body);
+    match result {
+        Ok(_) => tracing::info!(title, "notification sent"),
+        Err(e) => tracing::warn!("notification failed: {e}"),
+    }
 }
 
 fn send(cfg: &Config, notice: &Notice) {
@@ -185,32 +225,35 @@ fn send(cfg: &Config, notice: &Notice) {
             "default",
             "zap",
         ),
+        Notice::Low12V { volts } => (
+            "EV6 12V battery low",
+            format!(
+                "The 12V battery read {volts:.1}V. Drive or charge the car soon; \
+                 an EV6 will not start with a flat 12V battery."
+            ),
+            "high",
+            "warning,battery",
+        ),
     };
-    let url = format!("{}/{}", cfg.server, cfg.topic);
-    let result = ureq::post(&url)
-        .timeout(Duration::from_secs(15))
-        .set("Title", title)
-        .set("Priority", priority)
-        .set("Tags", tags)
-        .send_string(&body);
-    match result {
-        Ok(_) => tracing::info!(title, "notification sent"),
-        Err(e) => tracing::warn!("notification failed: {e}"),
-    }
+    notify(cfg, title, &body, priority, tags);
 }
 
-pub async fn run(state: AppState, cfg: Config) {
+pub async fn run(state: AppState, cfg: std::sync::Arc<Config>) {
     tracing::info!(
         server = %cfg.server,
         alert_after_s = cfg.alert_after_ms / 1000,
         "charge watch on"
     );
-    let cfg = std::sync::Arc::new(cfg);
     let mut watch = Watch::default();
     let mut tick = tokio::time::interval(CHECK_EVERY);
     loop {
         tick.tick().await;
         let Some(reading) = read(&state) else { continue };
+        if let Some(notice) = watch.step_12v(&reading, cfg.low_12v) {
+            tracing::info!(?notice, "charge watch");
+            let cfg = cfg.clone();
+            tokio::task::spawn_blocking(move || send(&cfg, &notice));
+        }
         if let Some(notice) = watch.step(reading, cfg.alert_after_ms) {
             // A charge that starts normally is only worth a ping if asked for;
             // one that starts after an alert always is.
@@ -236,10 +279,26 @@ mod tests {
             pack_w: Some(w),
             speed: Some(kmh),
             soc: Some(50.0),
+            lv_v: None,
         }
     }
 
     const T: i64 = 120_000;
+
+    #[test]
+    fn warns_once_per_low_12v_spell() {
+        let mut w = Watch::default();
+        let v = |volts| Reading { lv_v: Some(volts), ..r(0, false, 0.0, 0.0) };
+        assert_eq!(w.step_12v(&v(12.7), 12.2), None);
+        assert_eq!(w.step_12v(&v(12.1), 12.2), Some(Notice::Low12V { volts: 12.1 }));
+        assert_eq!(w.step_12v(&v(11.9), 12.2), None);
+        // Partial recovery does not re-arm...
+        assert_eq!(w.step_12v(&v(12.4), 12.2), None);
+        assert_eq!(w.step_12v(&v(12.0), 12.2), None);
+        // ...a real one does.
+        assert_eq!(w.step_12v(&v(14.3), 12.2), None);
+        assert_eq!(w.step_12v(&v(12.0), 12.2), Some(Notice::Low12V { volts: 12.0 }));
+    }
 
     #[test]
     fn alerts_once_when_plugged_and_idle() {
